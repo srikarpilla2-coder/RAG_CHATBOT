@@ -1,10 +1,11 @@
 import streamlit as st
 import os
 import time
-import hashlib
 import json
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Optional
+import shutil
 
 # --- Third-party imports ---
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
@@ -54,11 +55,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load environment variables (local .env or Streamlit secrets)
+# Load environment variables (local .env or Render secrets)
 load_dotenv()
 
 # ============================================================================
-# 2. INTERNAL CLASSES (From rag_engine.py)
+# 2. HELPER CLASSES (RateLimiter & Cache)
 # ============================================================================
 
 class RateLimiter:
@@ -158,6 +159,7 @@ class RAGService:
             texts = text_splitter.split_documents(documents)
             
             # Create vector store
+            # Handle large batches to prevent memory spikes
             if len(texts) > 100:
                 vectorstore = FAISS.from_documents(texts[:100], self.embeddings)
                 for i in range(100, len(texts), 100):
@@ -190,7 +192,7 @@ class RAGService:
             # Initialize LLM
             genai.configure(api_key=api_key)
             
-            # Attempt to initialize a working model
+            # Attempt to initialize a working model (Fallback logic)
             models_to_try = [
                 "models/gemini-2.5-flash",
                 "models/gemini-2.0-flash",
@@ -251,7 +253,7 @@ Answer:"""
 rag_service = RAGService()
 
 # ============================================================================
-# 4. UI LOGIC (From ui.py)
+# 4. UI LOGIC
 # ============================================================================
 
 def handle_local_intent(user_input):
@@ -284,7 +286,7 @@ with st.sidebar:
     st.markdown("### Control Panel")
     
     # API Key
-    api_key = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+    api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         st.warning("⚠️ API Key Missing")
         user_key = st.text_input("Enter Google API Key", type="password")
@@ -300,7 +302,7 @@ with st.sidebar:
     # Document Management
     st.markdown("**Document Management**")
     
-    # File Uploader for Streamlit Cloud
+    # File Uploader (Crucial for Render/Cloud)
     uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
     if uploaded_files:
         if not os.path.exists("data"):
@@ -376,7 +378,7 @@ if prompt := st.chat_input("Type your question here..."):
                         st.error(err)
                     else:
                         try:
-                            # Rate limit check could go here if needed
+                            # Rate limit check
                             rag_service.rate_limiter.wait_if_needed()
                             
                             # Execute Chain
